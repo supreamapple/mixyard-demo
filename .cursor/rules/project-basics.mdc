@@ -1,0 +1,28 @@
+---
+description: MixYard layout, commands, and conventions
+alwaysApply: true
+---
+
+# MixYard
+
+Specialty Concrete yard-ops demo. Static files at the repo root. No package manager, lockfile, bundler, test runner, or linter.
+
+## Layout
+
+- `index.html` — page shell, Tailwind from a CDN, and styles
+- `app.js` — the whole app (routes, state, and pages)
+- `sample-contacts.csv` — sample file for the Contacts upload
+- `sample-receipt-pts.txt` — sample paste or upload for Vendors
+
+## Commands
+
+- Serve: `python3 -m http.server 8080`, then open http://localhost:8080
+- This repo has no build, test, or lint command. Do not invent npm, pnpm, or yarn scripts.
+
+## Conventions
+
+- Hash router in `parseRoute()`: `#/`, `#/contacts`, `#/vendors`, `#/tickets`, `#/books`, `#/yard`, `#/fleet`, `#/calendar`, `#/quote`, plus `new` and `edit` paths.
+- State is in memory and `localStorage` key `mixyard.specialty.v3`. `resetDemo()` reseeds it.
+- Format dates and times in `America/Los_Angeles`.
+- Edit `app.js` and `index.html` in place. Leave the sample files as upload fixtures.
+- Books is an in-browser QuickBooks sandbox. Do not put an Intuit Client ID or Secret in these files.
