@@ -1,0 +1,5 @@
+{
+  "name": "MixYard",
+  "install": "bash .cursor/scripts/install.sh",
+  "start": "exec python3 -m http.server 8080"
+}
