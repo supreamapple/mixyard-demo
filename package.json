@@ -1,0 +1,12 @@
+{
+  "name": "mixyard-demo",
+  "private": true,
+  "description": "MixYard static demo. No production build step; smoke tests serve index.html.",
+  "scripts": {
+    "start": "python3 -m http.server 8080",
+    "test:smoke": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1"
+  }
+}
