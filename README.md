@@ -10,13 +10,11 @@ Yard ops app for Specialty Concrete (Kelso / Longview). Contacts, tickets, vendo
 
 ## Run
 
-Open `index.html` in a browser, or from the project folder:
-
 ```bash
-python3 -m http.server 8080
+python3 -m mixyard_app
 ```
 
-Then open http://localhost:8080
+Then open http://localhost:8080. The server binds `0.0.0.0` and `$PORT` (8080 when unset).
 
 ## Files
 

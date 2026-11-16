@@ -9,8 +9,8 @@ function fmtDate(iso) { return new Date(iso).toLocaleDateString('en-US', { timeZ
 function isToday(iso) { return new Date(iso).toLocaleDateString('en-CA', { timeZone: TZ }) === new Date().toLocaleDateString('en-CA', { timeZone: TZ }); }
 function withinYear(iso) { return Date.now() - new Date(iso).getTime() <= 365 * 24 * 3600 * 1000; }
 function addr(s) { return [s.line1, s.line2, [s.city, s.state].filter(Boolean).join(', '), s.zip].filter(Boolean).join(', '); }
-function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>'); }
-function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '"'); }
+function escapeHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
 function money(n) { return Number.isFinite(+n) ? '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; }
 const STATUS = { scheduled: 'Scheduled', en_route: 'En route', pouring: 'Pouring', complete: 'Complete', cancelled: 'Cancelled' };
 const SCLASS = { scheduled: 'bg-navy/10 text-navy', en_route: 'bg-amber-100 text-amber-800', pouring: 'bg-kelly/15 text-kelly', complete: 'bg-mint/25 text-navy', cancelled: 'bg-rose-100 text-rose-700' };
@@ -19,10 +19,10 @@ function seed() {
   const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
   return {
     contacts: [
-      { id: 'ct_river', name: 'Dana Ellison', company: 'River Bend Homes', phones: [{ id: 'ph1', label: 'Mobile', number: '(360) 555-0142' }], notes: 'Prefers morning pours. Gate code 4412.', banned: false, createdAt: '2026-02-11T16:00:00.000Z' },
-      { id: 'ct_cedar', name: 'Tom Bricker', company: 'Bricker Construction', phones: [{ id: 'ph3', label: 'Mobile', number: '(360) 555-0198' }], notes: 'Usually prevailing wage on city work.', banned: false, createdAt: '2025-11-02T16:00:00.000Z' },
-      { id: 'ct_patel', name: 'Priya Patel', company: '', phones: [{ id: 'ph4', label: 'Home', number: '(360) 555-0117' }], notes: 'Residential. Dog in backyard.', banned: false, createdAt: '2026-04-03T16:00:00.000Z' },
-      { id: 'ct_bad', name: 'Skip Pay Co', company: 'Skip Pay Co', phones: [{ id: 'ph9', label: 'Office', number: '(360) 555-0000' }], notes: 'Unpaid 2025. Do not book.', banned: true, createdAt: '2025-03-01T16:00:00.000Z' }
+      { id: 'ct_river', name: 'Dana Ellison', company: 'River Bend Homes', email: 'dana@riverbend.example', phones: [{ id: 'ph1', label: 'Mobile', number: '(360) 555-0142' }], notes: 'Prefers morning pours. Gate code 4412.', banned: false, createdAt: '2026-02-11T16:00:00.000Z' },
+      { id: 'ct_cedar', name: 'Tom Bricker', company: 'Bricker Construction', email: 'tom@bricker.example', phones: [{ id: 'ph3', label: 'Mobile', number: '(360) 555-0198' }], notes: 'Usually prevailing wage on city work.', banned: false, createdAt: '2025-11-02T16:00:00.000Z' },
+      { id: 'ct_patel', name: 'Priya Patel', company: '', email: 'priya@patel.example', phones: [{ id: 'ph4', label: 'Home', number: '(360) 555-0117' }], notes: 'Residential. Dog in backyard.', banned: false, createdAt: '2026-04-03T16:00:00.000Z' },
+      { id: 'ct_bad', name: 'Skip Pay Co', company: 'Skip Pay Co', email: 'skip@skippay.example', phones: [{ id: 'ph9', label: 'Office', number: '(360) 555-0000' }], notes: 'Unpaid 2025. Do not book.', banned: true, createdAt: '2025-03-01T16:00:00.000Z' }
     ],
     jobsites: [
       { id: 'js_river1', contactId: 'ct_river', label: 'River lot 12', line1: '88 River Rd', line2: '', city: 'Longview', state: 'WA', zip: '98632', lastUsedAt: at(7, 30) },
@@ -67,8 +67,20 @@ function load() {
   return seed();
 }
 let S = load();
-function persist() { localStorage.setItem(KEY, JSON.stringify(S)); render(); }
-function resetDemo() { S = seed(); persist(); }
+function persist() {
+  localStorage.setItem(KEY, JSON.stringify(S));
+  const synced = window.MIXYARD_SERVER ? syncYard() : Promise.resolve();
+  synced.then(() => render());
+}
+async function resetDemo() {
+  S = seed();
+  localStorage.setItem(KEY, JSON.stringify(S));
+  if (window.MIXYARD_SERVER) {
+    await fetch('/api/reset', { method: 'POST' });
+    await syncYard();
+  }
+  await render();
+}
 function contactBy(id) { return S.contacts.find((c) => c.id === id); }
 function vendorBy(id) { return S.vendors.find((v) => v.id === id); }
 function truckBy(id) { return S.trucks.find((t) => t.id === id); }
@@ -82,6 +94,9 @@ function saveContact(c) {
     company: (c.company || '').trim(),
     phones: (c.phones || []).filter((p) => p.number && p.number.trim()),
     notes: (c.notes || '').trim(),
+    email: (c.email || '').trim(),
+    emailOptOut: !!(existing ? existing.emailOptOut : c.emailOptOut),
+    smsOptOut: !!(existing ? existing.smsOptOut : c.smsOptOut),
     banned: !!c.banned,
     createdAt: existing ? existing.createdAt : nowIso()
   };
@@ -162,7 +177,7 @@ function importContacts(rows) {
   let added = 0, updated = 0;
   rows.forEach((row) => {
     const hit = S.contacts.find((c) => c.name.toLowerCase() === row.name.toLowerCase());
-    saveContact({ id: hit?.id, name: row.name, company: row.company || hit?.company || '', phones: row.phone ? [{ id: uid('ph'), label: 'Mobile', number: row.phone }] : (hit?.phones || []), notes: [hit?.notes, row.notes].filter(Boolean).join(' '), banned: !!hit?.banned });
+    saveContact({ id: hit?.id, name: row.name, company: row.company || hit?.company || '', email: hit?.email || '', phones: row.phone ? [{ id: uid('ph'), label: 'Mobile', number: row.phone }] : (hit?.phones || []), notes: [hit?.notes, row.notes].filter(Boolean).join(' '), banned: !!hit?.banned });
     hit ? updated++ : added++;
   });
   return { added, updated };
@@ -187,11 +202,12 @@ function parseRoute() {
   if (path === '/fleet') return { name: 'fleet' };
   if (path === '/calendar') return { name: 'calendar' };
   if (path === '/quote') return { name: 'quote' };
+  if (path === '/settings') return { name: 'settings' };
   return { name: 'dashboard' };
 }
 
 function layout(active, inner) {
-  const nav = [['/', 'Board', 'dashboard'], ['/contacts', 'Contacts', 'contact'], ['/vendors', 'Vendors', 'vendor'], ['/tickets', 'Tickets', 'ticket'], ['/books', 'Books', 'books'], ['/yard', 'Yard', 'yard'], ['/fleet', 'Fleet', 'fleet'], ['/calendar', 'Calendar', 'calendar'], ['/quote', 'Quote', 'quote']];
+  const nav = [['/', 'Board', 'dashboard'], ['/contacts', 'Contacts', 'contact'], ['/vendors', 'Vendors', 'vendor'], ['/tickets', 'Tickets', 'ticket'], ['/books', 'Books', 'books'], ['/yard', 'Yard', 'yard'], ['/fleet', 'Fleet', 'fleet'], ['/calendar', 'Calendar', 'calendar'], ['/quote', 'Quote', 'quote'], ['/settings', 'Settings', 'settings']];
   return `<header class="sticky top-0 z-40 bg-navy text-white">
     <div class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
       <button data-go="/" class="text-left"><div class="font-display text-2xl leading-none">MixYard</div><div class="text-[11px] uppercase tracking-widest text-mint">Specialty Concrete</div></button>
@@ -207,9 +223,11 @@ function pageDashboard() {
   const yards = today.reduce((s, p) => s + Number(p.yards || 0), 0);
   const rows = today.length ? today.map((p) => {
     const c = contactBy(p.contactId);
-    return `<button data-go="/tickets/${p.id}" class="flex w-full items-center justify-between border-t border-navy/10 px-4 py-3 text-left">
-      <div><div class="font-semibold">${escapeHtml(c?.name || 'No contact')} · ${p.yards} yd ${p.psi}</div><div class="text-sm text-slateish">${fmtTime(p.scheduledAt)} · ${escapeHtml(p.address)}</div></div>
-      <span class="badge ${SCLASS[p.status]}">${STATUS[p.status]}</span></button>`;
+    return `<div class="flex w-full items-center gap-2 border-t border-navy/10 px-4 py-3">
+      <button data-go="/tickets/${p.id}" class="flex flex-1 items-center justify-between text-left">
+      <div><div class="font-semibold">${escapeHtml(c?.name || 'No contact')} · ${p.yards} yd${p.psi ? ' ' + p.psi : ''}</div><div class="text-sm text-slateish">${fmtTime(p.scheduledAt)} · ${escapeHtml(p.address)}</div></div>
+      <span class="badge ${SCLASS[p.status]}">${STATUS[p.status]}</span></button>
+      ${typeof tapAnchor === 'function' ? tapAnchor(p.id) : ''}</div>`;
   }).join('') : '<div class="px-4 py-4 text-sm text-slateish">No pours scheduled today.</div>';
   const plant = S.materials.map((m) => `<div class="flex justify-between text-sm"><span>${m.label}</span><span>${m.yardQty}/${m.capacity} ${m.unit}</span></div>`).join('');
   return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">Specialty Concrete · Kelso yard</p><h1 class="font-display text-4xl">Today's board</h1>
@@ -245,17 +263,19 @@ function pageContacts() {
 function pageContact(c, isNew) {
   const phones = (c?.phones || [{ id: uid('ph'), label: 'Mobile', number: '' }]);
   const sites = c ? recentSites(c.id) : [];
-  return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">Contact</p><h1 class="font-display text-4xl">${isNew ? 'New contact' : escapeHtml(c.name)}</h1>
+  const flags = c ? `${c.smsOptOut ? '<span class="badge bg-rose-100 text-rose-700">Texts off</span>' : ''}${c.emailOptOut ? '<span class="badge bg-amber-100 text-amber-800">Emails off</span>' : ''}` : '';
+  return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">Contact</p><div class="flex flex-wrap items-center gap-2"><h1 class="font-display text-4xl">${isNew ? 'New contact' : escapeHtml(c.name)}</h1>${flags}</div>
     <form id="contactform" class="card mt-4 space-y-3 p-4">
       <label class="block text-sm font-semibold">Name<input name="name" class="field mt-1" value="${escapeAttr(c?.name || '')}" required /></label>
       <label class="block text-sm font-semibold">Company<input name="company" class="field mt-1" value="${escapeAttr(c?.company || '')}" /></label>
+      <label class="block text-sm font-semibold">Email<input name="email" type="email" class="field mt-1" value="${escapeAttr(c?.email || '')}" /></label>
       <label class="block text-sm font-semibold">Phone<input name="phone" class="field mt-1" value="${escapeAttr(phones[0]?.number || '')}" /></label>
       <label class="block text-sm font-semibold">Notes<textarea name="notes" class="field mt-1" rows="3">${escapeHtml(c?.notes || '')}</textarea></label>
       <label class="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="banned" ${c?.banned ? 'checked' : ''} /> Never do business with</label>
       <div class="flex gap-2"><button class="btn btn-p" type="submit">Save</button><button class="btn btn-g" type="button" data-go="/contacts">Cancel</button>${c ? `<button class="btn btn-d" type="button" id="delcontact">Delete</button>` : ''}</div>
     </form>
     ${c ? `<section class="card mt-3 p-4"><div class="flex items-center justify-between"><h2 class="font-display text-2xl">Jobsites</h2><button class="btn btn-g" data-go="/tickets/new?contact=${c.id}" ${c.banned ? 'disabled' : ''}>New ticket</button></div>
-      <div class="mt-2 space-y-2">${sites.map((j) => `<div class="rounded-xl border border-navy/10 p-3 text-sm"><div class="font-semibold">${escapeHtml(j.label || j.line1)}</div><div>${escapeHtml(addr(j))}</div></div>`).join('') || '<div class="text-sm text-slateish">No sites in the last year.</div>'}</div></section>` : ''}`;
+      <div class="mt-2 space-y-2">${sites.map((j) => `<div class="rounded-xl border border-navy/10 p-3 text-sm"><div class="font-semibold">${escapeHtml(j.label || j.line1)}</div><div>${escapeHtml(addr(j))}</div></div>`).join('') || '<div class="text-sm text-slateish">No sites in the last year.</div>'}</div></section>${typeof contactThread === 'function' ? contactThread(c) : ''}` : ''}`;
 }
 
 function pageVendors() {
@@ -289,7 +309,8 @@ function pageVendor(v, isNew) {
 function pageTickets() {
   const rows = S.pours.map((p) => {
     const c = contactBy(p.contactId);
-    return `<button data-go="/tickets/${p.id}" class="card w-full p-4 text-left"><div class="flex items-start justify-between"><div class="font-semibold">${escapeHtml(p.ticketNo)} · ${escapeHtml(c?.name || 'No contact')}</div><span class="badge ${SCLASS[p.status]}">${STATUS[p.status]}</span></div><div class="text-sm text-slateish">${fmtDate(p.scheduledAt)} ${fmtTime(p.scheduledAt)} · ${p.yards} yd ${p.psi}</div><div class="text-sm">${escapeHtml(p.address)}</div></button>`;
+    const mix = p.yards ? `${p.yards} yd${p.psi ? ' ' + p.psi : ''}` : 'Text';
+    return `<button data-go="/tickets/${p.id}" class="card w-full p-4 text-left"><div class="flex items-start justify-between"><div class="font-semibold">${escapeHtml(p.ticketNo)} · ${escapeHtml(c?.name || 'No contact')}</div><span class="badge ${SCLASS[p.status]}">${STATUS[p.status]}</span></div><div class="text-sm text-slateish">${fmtDate(p.scheduledAt)} ${fmtTime(p.scheduledAt)} · ${mix}</div><div class="text-sm">${escapeHtml(p.address || p.notes || '')}</div></button>`;
   }).join('');
   return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">Pours</p><div class="flex items-end justify-between"><h1 class="font-display text-4xl">Tickets</h1><button class="btn btn-p" data-go="/tickets/new">New ticket</button></div><div class="mt-3 grid gap-3">${rows || '<div class="text-sm text-slateish">No tickets.</div>'}</div>`;
 }
@@ -299,8 +320,9 @@ function pageTicket(p) {
   const driver = driverBy(p.driverId);
   const next = [['scheduled', 'Schedule'], ['en_route', 'En route'], ['pouring', 'Pouring'], ['complete', 'Complete'], ['cancelled', 'Cancel']];
   return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">${escapeHtml(p.ticketNo)}</p><h1 class="font-display text-4xl">${escapeHtml(c?.name || 'Ticket')}</h1>
-    <section class="card mt-4 p-4 text-sm space-y-1"><div><span class="badge ${SCLASS[p.status]}">${STATUS[p.status]}</span></div><div>${fmtDate(p.scheduledAt)} ${fmtTime(p.scheduledAt)}</div><div>${p.yards} yd · ${p.psi} PSI</div><div>${escapeHtml(p.address)}</div><div>${escapeHtml(truck?.unit || '')} · ${escapeHtml(driver?.name || '')}</div><div>${escapeHtml(p.notes || '')}</div></section>
-    <div class="mt-3 flex flex-wrap gap-2">${next.map(([s, l]) => `<button class="btn ${s === p.status ? 'btn-n' : 'btn-g'}" data-status="${s}">${l}</button>`).join('')}<button class="btn btn-g" data-go="/tickets/${p.id}/edit">Edit</button></div>`;
+    <section class="card mt-4 p-4 text-sm space-y-1"><div><span class="badge ${SCLASS[p.status]}">${STATUS[p.status]}</span></div><div>${fmtDate(p.scheduledAt)} ${fmtTime(p.scheduledAt)}</div><div>${p.yards ? p.yards + ' yd' + (p.psi ? ' · ' + p.psi + ' PSI' : '') : 'Text'}</div><div>${escapeHtml(p.address)}</div><div>${escapeHtml(truck?.unit || '')} · ${escapeHtml(driver?.name || '')}</div><div>${escapeHtml(p.notes || '')}</div></section>
+    <div class="mt-3 flex flex-wrap gap-2">${next.map(([s, l]) => `<button class="btn ${s === p.status ? 'btn-n' : 'btn-g'}" data-status="${s}">${l}</button>`).join('')}<button class="btn btn-g" data-go="/tickets/${p.id}/edit">Edit</button>${typeof ticketTap === 'function' ? ticketTap(p) : ''}</div>
+    ${typeof ticketFollowups === 'function' ? ticketFollowups(p) : ''}`;
 }
 function pageTicketForm(existing, presetContactId) {
   const bookable = S.contacts.filter((c) => !c.banned);
@@ -341,6 +363,7 @@ function pageCalendar() {
   return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">Schedule</p><h1 class="font-display text-4xl">Calendar</h1><div class="mt-3 grid gap-3">${rows || '<div class="text-sm text-slateish">No pours on the calendar.</div>'}</div>`;
 }
 function pageQuote() {
+  if (window.F && typeof pageQuotes === 'function') return pageQuotes();
   return `<p class="text-xs font-semibold uppercase tracking-widest text-slateish">Pricing</p><h1 class="font-display text-4xl">Quote</h1>
     <form id="quoteform" class="card mt-4 space-y-3 p-4">
       <div class="grid gap-3 sm:grid-cols-2">
@@ -377,7 +400,7 @@ function pullQbo() {
   ];
   customers.forEach((c) => {
     const hit = S.contacts.find((x) => x.name.toLowerCase() === c.name.toLowerCase());
-    const row = saveContact({ id: hit?.id, name: c.name, company: c.company, phones: [{ id: uid('ph'), label: 'QBO', number: c.phone }], notes: c.notes, banned: !!hit?.banned });
+    const row = saveContact({ id: hit?.id, name: c.name, company: c.company, email: hit?.email || '', phones: [{ id: uid('ph'), label: 'QBO', number: c.phone }], notes: c.notes, banned: !!hit?.banned });
     row.qboId = row.qboId || uid('qbo');
   });
   findOrCreateVendor('CalPortland — aggregate');
@@ -391,8 +414,28 @@ function pullQbo() {
   persist();
 }
 
-function render() {
+let renderToken = 0;
+async function render() {
+  const token = ++renderToken;
   const r = parseRoute();
+  if (window.MIXYARD_SERVER) await refreshFollowups();
+  else window.F = null;
+  if (token !== renderToken) return;
+  window._thread = null;
+  window._jobLog = [];
+  if (window.MIXYARD_SERVER && r.name === 'contact') {
+    try {
+      const res = await fetch('/api/contacts/' + encodeURIComponent(r.id) + '/thread');
+      window._thread = res.ok ? await res.json() : null;
+    } catch (e) { window._thread = null; }
+  }
+  if (window.MIXYARD_SERVER && r.name === 'ticket') {
+    try {
+      const res = await fetch('/api/jobs/' + encodeURIComponent(r.id) + '/messages');
+      window._jobLog = res.ok ? (await res.json()).messages || [] : [];
+    } catch (e) { window._jobLog = []; }
+  }
+  if (token !== renderToken) return;
   let active = r.name.startsWith('contact') ? 'contact' : r.name.startsWith('vendor') ? 'vendor' : r.name.startsWith('ticket') ? 'ticket' : r.name;
   let inner = '';
   if (r.name === 'contacts') inner = pageContacts();
@@ -410,6 +453,7 @@ function render() {
   else if (r.name === 'fleet') inner = pageFleet();
   else if (r.name === 'calendar') inner = pageCalendar();
   else if (r.name === 'quote') inner = pageQuote();
+  else if (r.name === 'settings') inner = pageSettings();
   else inner = pageDashboard();
   $('#app').innerHTML = layout(active, inner);
   bind(r);
@@ -430,7 +474,7 @@ function bind(r) {
     e.preventDefault();
     const f = new FormData(e.target);
     const existing = r.name === 'contact' ? contactBy(r.id) : null;
-    const row = saveContact({ id: existing?.id, name: f.get('name'), company: f.get('company'), phones: [{ id: existing?.phones?.[0]?.id || uid('ph'), label: 'Mobile', number: f.get('phone') }], notes: f.get('notes'), banned: !!f.get('banned') });
+    const row = saveContact({ id: existing?.id, name: f.get('name'), company: f.get('company'), email: f.get('email'), phones: [{ id: existing?.phones?.[0]?.id || uid('ph'), label: 'Mobile', number: f.get('phone') }], notes: f.get('notes'), banned: !!f.get('banned'), emailOptOut: existing?.emailOptOut, smsOptOut: existing?.smsOptOut });
     go('/contacts/' + row.id);
   });
   $('#delcontact')?.addEventListener('click', () => { if (confirm('Delete this contact?')) { deleteContact(r.id); go('/contacts'); } });
@@ -474,6 +518,7 @@ function bind(r) {
   });
   $('#qboconnect')?.addEventListener('click', connectQbo);
   $('#qbopull')?.addEventListener('click', pullQbo);
+  if (typeof bindFollowups === 'function') bindFollowups(r);
 }
 function fileReceipt(text, fileName) {
   const parsed = parseReceiptText(text, fileName);
@@ -483,6 +528,17 @@ function fileReceipt(text, fileName) {
   go('/vendors/' + vendor.id);
 }
 
-window.addEventListener('hashchange', render);
-if (!location.hash) location.hash = '/';
-render();
+let booted = false;
+window.addEventListener('hashchange', () => { if (booted) render(); });
+async function boot() {
+  window.MIXYARD_SERVER = false;
+  try {
+    const res = await fetch('/api/health', { cache: 'no-store' });
+    window.MIXYARD_SERVER = res.ok;
+  } catch (e) { window.MIXYARD_SERVER = false; }
+  if (!location.hash) history.replaceState(null, '', '#/');
+  booted = true;
+  if (window.MIXYARD_SERVER) await syncYard();
+  await render();
+}
+boot();
